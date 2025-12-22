@@ -1,5 +1,58 @@
 [
     {
+        "domain": "PyTorch",
+        "color": "E2D7FF",
+        "module": "torch.utils.data",
+        "functions": [
+          "_utils.worker._worker_loop",
+          "_DatasetKind.create_fetcher",
+          "worker_main"
+        ]
+      },
+    {
+        "domain": "flash_attention",
+        "color": "ffff00",
+        "module": "flash_attn",
+        "functions": [
+            "flash_attn_func",
+            "flash_attn_varlen_func"
+            
+        ]
+    },
+    {
+        "domain": "PyTorch",
+        "color": "A6F7E4",
+        "module": "torch.utils.data.dataloader",
+        "functions": [
+            "_BaseDataLoaderIter.__next__",
+            "_SingleProcessDataLoaderIter.__next__",
+            "_MultiProcessingDataLoaderIter.__next__"
+        ]
+    },
+    {
+        "domain": "PyTorch",
+        "color": "A6F7E4",
+        "module": "torch.utils.data.dataset",
+        "functions": [
+            "Dataset.__getitem__",
+            "IterableDataset.__iter__"
+        ]
+    },
+    {
+        "domain": "WeatherGen",
+        "color": "#741B47",
+        "module": "weathergen.train.loss_calculator",
+        "functions": [
+            "LossValues",
+            "LossCalculator.__init__",
+            "LossCalculator._get_weights",
+            "LossCalculator._get_fstep_weights",
+            "LossCalculator._get_location_weights",
+            "LossCalculator._get_substep_masks",
+            "LossCalculator.compute_loss"
+        ]
+    },
+    {
         "domain": "WeatherGen",
         "color": "A1F702",
         "module": "weathergen.datasets.multi_stream_data_sampler",
@@ -217,16 +270,6 @@
         ]
     },
     {
-        "domain": "flash_attention",
-        "color": "ffff00",
-        "module": "flash_attn",
-        "functions": [
-            "flash_attn_func",
-            "flash_attn_varlen_func"
-            
-        ]
-    },
-    {
         "domain": "PyTorch_flash_attention",
         "color": "808000",
         "module": "torch.nn.attention.flex_attention",
@@ -377,9 +420,10 @@
         "color": "E89C5A",
         "module": "torch.autograd",
         "functions": ["backward"]
-    },
-
+    },    
     {
+    
+
         "domain": "PyTorch",
         "color": "E85A5A",
         "module": "torch.nn.functional",
@@ -736,7 +780,6 @@
             "ascontiguousarray",
             "asfortranarray",
             "empty",
-            "empty_like",
             "zeros",
             "zeros_like",
             "ones",
