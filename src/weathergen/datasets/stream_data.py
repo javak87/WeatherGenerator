@@ -97,6 +97,30 @@ class StreamData:
 
         return self
 
+    def pin_memory(self):
+        """Pin all tensors in this StreamData object"""
+        if hasattr(self, 'source_tokens_cells') and self.source_tokens_cells is not None:
+            self.source_tokens_cells = self.source_tokens_cells.pin_memory()
+        if hasattr(self, 'source_centroids') and self.source_centroids is not None:
+            self.source_centroids = self.source_centroids.pin_memory()
+        if hasattr(self, 'source_tokens_lens') and self.source_tokens_lens is not None:
+            self.source_tokens_lens = self.source_tokens_lens.pin_memory()
+        
+        if hasattr(self, 'target_coords') and self.target_coords is not None:
+            self.target_coords = [t.pin_memory() for t in self.target_coords]
+        if hasattr(self, 'target_tokens') and self.target_tokens is not None:
+            self.target_tokens = [t.pin_memory() for t in self.target_tokens]
+        if hasattr(self, 'target_tokens_lens') and self.target_tokens_lens is not None:
+            self.target_tokens_lens = [t.pin_memory() for t in self.target_tokens_lens]
+        
+        if hasattr(self, 'source_idxs_embed') and self.source_idxs_embed is not None:
+            self.source_idxs_embed = self.source_idxs_embed.pin_memory()
+        if hasattr(self, 'source_idxs_embed_pe') and self.source_idxs_embed_pe is not None:
+            self.source_idxs_embed_pe = self.source_idxs_embed_pe.pin_memory()
+        
+        return self
+
+
     def add_empty_source(self, source: IOReaderData) -> None:
         """
         Add an empty source for an input.
