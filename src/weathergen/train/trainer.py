@@ -39,6 +39,38 @@ from weathergen.utils.validation_io import write_output
 logger = logging.getLogger(__name__)
 
 
+def pin_batch_to_memory(batch_tuple):
+    
+    """Pin batch in main process after receiving from DataLoader"""
+    batch, source_cell_lens, target_coords_idx, forecast_dt = batch_tuple
+    
+    # Pin each StreamData object
+    for batch_item in batch:
+        for stream_data in batch_item:
+            stream_data.pin_memory()
+    
+    # Pin other tensors
+    if isinstance(source_cell_lens, torch.Tensor):
+        source_cell_lens = source_cell_lens.pin_memory()
+    
+    # Pin target_coords_idx
+    target_coords_idx_pinned = []
+    for coords_list in target_coords_idx:
+        if isinstance(coords_list, list):
+            target_coords_idx_pinned.append([
+                t.pin_memory() if isinstance(t, torch.Tensor) else t 
+                for t in coords_list
+            ])
+        elif isinstance(coords_list, torch.Tensor):
+            target_coords_idx_pinned.append(coords_list.pin_memory())
+        else:
+            target_coords_idx_pinned.append(coords_list)
+    
+    if isinstance(forecast_dt, torch.Tensor):
+        forecast_dt = forecast_dt.pin_memory()
+    
+    return batch, source_cell_lens, target_coords_idx_pinned, forecast_dt
+
 class Trainer(TrainerBase):
     def __init__(self, train_log_freq: Config):
         TrainerBase.__init__(self)
