@@ -397,6 +397,9 @@ class Trainer(TrainerBase):
         # training loop
         self.t_start = time.time()
         for bidx, batch in enumerate(dataset_iter):
+            
+            # pin memory
+            batch = pin_batch_to_memory(batch)
             batch.to_device(self.device)
 
             with torch.autocast(
