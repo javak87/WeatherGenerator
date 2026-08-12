@@ -1,6 +1,6 @@
 # FSDP vs HSDP experiments (AllGather → AllReduce)
 
-Nsight Systems comparison of full-world FSDP2 vs hybrid sharding (HSDP) on Jupiter, plus an ongoing **1→8 node** throughput sweep **without** nsys.
+Nsight Systems comparison of full-world FSDP2 vs hybrid sharding (HSDP) on Jupiter, plus a completed **1/2/4/8 node** throughput sweep (**ingested samples**, no nsys) on `develop` vs `javad/hsdp-2d-mesh`.
 
 ## Runs
 
@@ -114,27 +114,23 @@ HSDP **increases** memory; it does not save it. Prefer `torch.cuda.max_memory_al
 
 ---
 
-## Experiment 3 — Node scaling 1→8 (no nsys) — *in progress*
+## Experiment 3 — Node scaling (no nsys) — completed
 
-Throughput / scaling study **without** Nsight Systems (avoid profiler overhead). Same lowres config and HSDP settings as Experiment 2.
-
-### Goal
-
-Measure how training throughput scales with node count under HSDP, and how the **replicate** AllReduce group grows.
+Throughput / scaling study **without** Nsight Systems. Metric: **ingested samples** over the job (higher is better). Same lowres config; HSDP branch uses `hsdp_shard_size: 4`.
 
 ### Setup
 
 | Item | Value |
 |------|--------|
 | Config | `config/config_operan_georing_avhrr_forecasting_lowres.yml` |
-| HSDP | `hsdp_shard_size: 4` (shard = 4 GPUs/node) |
-| Nodes swept | **1, 2, 4, 8** (4 GPUs/node → 4 / 8 / 16 / 32 ranks) |
-| Profiling | **none** (no `--nsys-profiling`) |
-| Primary metric | log `s/sec` after warmup (e.g. step ≥ 20) |
+| Branches | `develop` (full-world FSDP) vs `javad/hsdp-2d-mesh` (`hsdp_shard_size: 4`) |
+| Nodes swept | **1, 2, 4, 8** (4 GPUs/node) |
+| Wall time | `--time 60` |
+| Profiling | **none** (`WEATHERGEN_NSYS_PROFILING=0`) |
+| Primary metric | **ingested samples** |
 
 ```bash
-# Example for N nodes (repeat N = 1 .. 8); do NOT pass --nsys-profiling
-../WeatherGenerator-private/hpc/launch-slurm.py --time 15 --nodes=N \
+../WeatherGenerator-private/hpc/launch-slurm.py --time 60 --nodes=N \
   --base-config ./config/config_operan_georing_avhrr_forecasting_lowres.yml
 ```
 
@@ -149,36 +145,30 @@ With `hsdp_shard_size: 4`:
 | 4 | 16 | 4 × 4 | 4 | 4 |
 | 8 | 32 | 8 × 4 | 4 | **8** |
 
-AllGather cost should stay similar across node counts (always shard=4). Cross-node **AllReduce** should grow with `replicate = num_nodes` — this is the scaling cliff to quantify in logs.
+### Results — ingested samples
 
-### Results table (fill as runs finish)
+| Nodes | `develop` run | Ingested samples | `javad/hsdp-2d-mesh` run | Ingested samples | Δ (HSDP − develop) |
+|------:|---------------|-----------------:|--------------------------|-----------------:|-------------------:|
+| 1 | `x7n38kzc` | **880** | `wwxs6vv6` | **870** | −10 (−1.1%) |
+| 2 | — | — | `bm8eogar` | **682** | — |
+| 4 | `q4ol6600` | **622** | `zpg63djd` | **652** | **+30 (+4.8%)** |
+| 8 | `ay98z59e` | **376** | `lpfwaiy9` | **394** | **+18 (+4.8%)** |
 
-| Nodes | Run ID | Slurm job | `s/sec` (post-warmup) | Notes |
-|------:|--------|-----------|----------------------:|-------|
-| 1 | `wwxs6vv6` | 1311829 | | |
-| 2 | `bm8eogar` | 1311833 | | |
-| 4 | `zpg63djd` | 1311837 | | |
-| 8 | `lpfwaiy9` | 1311846 | | compare to nsys run `rzl66dge` |
+### Interpretation
 
-All launched with `--time 60`, no `--nsys-profiling` (`WEATHERGEN_NSYS_PROFILING=0`). Confirm each log contains `HSDP DeviceMesh: replicate=<N> × shard=4`.
-
-### How to read `s/sec` from logs
-
-```bash
-rg "s/sec=" /e/scratch/weatherai/slurm/slurm_weathergen_<RUN>_dir/WeatherGenerator/logs/<RUN>/log.txt
-```
-
-Use a stable post-warmup step (e.g. 20 or 40), not step 10 alone.
+- **1 node:** HSDP ≈ develop (within noise). Replicate group size is 1, so no cross-node AllReduce; no expected win.
+- **4 / 8 nodes:** HSDP ingests **~5% more** samples than develop in the same wall time — modest but consistent with the nsys finding (cheaper AllGather, AllReduce still limits scaling).
+- **Scaling efficiency is poor on both branches:** ingested samples **drop** as nodes increase (880 → 376 on develop; 870 → 394 on HSDP). Communication grows faster than useful compute — matches Experiment 2 (replica AllReduce dominates at 8 nodes).
+- **2-node HSDP** (`bm8eogar`: 682) sits between 1- and 4-node points; no develop baseline was recorded for 2 nodes.
 
 ---
 
 ## Next steps (AllReduce bottleneck)
 
-1. **Finish Experiment 3** — fill the 1→8 node `s/sec` table (no nsys).
-2. **Coarser `fully_shard`** — wrap whole blocks, not every Attention/MLP (fewer, larger AllReduces).
-3. **Tune `hsdp_shard_size`** — e.g. `8` shrinks replicate group 8→4 (trades some AG cost for less AR).
-4. **Backward prefetch** — overlap replica AllReduce with backward compute once messages are larger.
-5. **Cheaper reduce dtype** — try `bf16` instead of fp32 `reduce_dtype` if numerically acceptable.
-6. Optional: disable EMA for short scaling runs (EMA update was slower under HSDP).
+1. **Coarser `fully_shard`** — wrap whole blocks, not every Attention/MLP (fewer, larger AllReduces).
+2. **Tune `hsdp_shard_size`** — e.g. `8` shrinks replicate group 8→4 (trades some AG cost for less AR).
+3. **Backward prefetch** — overlap replica AllReduce with backward compute once messages are larger.
+4. **Cheaper reduce dtype** — try `bf16` instead of fp32 `reduce_dtype` if numerically acceptable.
+5. Optional: disable EMA for short scaling runs (EMA update was slower under HSDP).
 
-After code changes, optionally re-enable `--nsys-profiling` on 8 nodes and compare **AllReduce total ms** / **avg ms**.
+After code changes, re-run the 1/4/8 node ingested-samples sweep and optionally `--nsys-profiling` on 8 nodes.
