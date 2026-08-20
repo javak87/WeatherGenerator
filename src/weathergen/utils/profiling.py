@@ -12,6 +12,7 @@
 import contextlib
 import dataclasses
 import logging
+import os
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +27,25 @@ logger = logging.getLogger(__name__)
 
 _TIMESTAMP_FORMAT = "%Y%m%dT%H%M%S"
 _MAX_MEMORY_EVENTS = 100_000
+
+
+class ProfilerSection:
+    """NVTX range for a named region. Active when nsys profiling is enabled."""
+
+    def __init__(self, name: str, profile: bool | None = None):
+        self.name = name
+        if profile is None:
+            profile = os.environ.get("WEATHERGEN_NSYS_PROFILING", "0") == "1"
+        self.profile = profile
+
+    def __enter__(self):
+        if self.profile:
+            torch.cuda.nvtx.range_push(self.name)
+        return self
+
+    def __exit__(self, *args, **kwargs):
+        if self.profile:
+            torch.cuda.nvtx.range_pop()
 
 
 @dataclasses.dataclass(frozen=True)

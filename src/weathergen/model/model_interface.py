@@ -38,6 +38,7 @@ from weathergen.model.utils import (
     reset_weights,
 )
 from weathergen.utils.distributed import is_root
+from weathergen.utils.profiling import ProfilerSection
 from weathergen.utils.utils import get_dtype
 
 logger = logging.getLogger(__name__)
@@ -73,29 +74,32 @@ def init_model_and_shard(
     overrides={},
 ):
     model_creation_device = "meta" if with_ddp and with_fsdp else "cuda"
-    with torch.device(model_creation_device):
-        model = get_model(cf, training_mode, dataset, overrides)
+    with ProfilerSection("get_model"):
+        with torch.device(model_creation_device):
+            model = get_model(cf, training_mode, dataset, overrides)
 
     # freeze request model part
-    apply_fct_to_blocks(model, cf.freeze_modules, freeze_weights)
+    with ProfilerSection("freeze_modules"):
+        apply_fct_to_blocks(model, cf.freeze_modules, freeze_weights)
 
-    # TODO: this should be handled in the encoder to be close where q_cells is defined
-    if "q_cells" in cf.freeze_modules:
-        model.encoder.q_cells.requires_grad = False
-    if "q_aux" in cf.freeze_modules:
-        if model.encoder.q_aux is not None:
-            model.encoder.q_aux.requires_grad = False
+        # TODO: this should be handled in the encoder to be close where q_cells is defined
+        if "q_cells" in cf.freeze_modules:
+            model.encoder.q_cells.requires_grad = False
+        if "q_aux" in cf.freeze_modules:
+            if model.encoder.q_aux is not None:
+                model.encoder.q_aux.requires_grad = False
 
     if with_ddp and not with_fsdp:
         # create DDP model if running without FSDP
-        model = torch.nn.parallel.DistributedDataParallel(
-            model,
-            broadcast_buffers=True,
-            find_unused_parameters=cf.get("ddp_find_unused_parameters", True),
-            gradient_as_bucket_view=True,
-            bucket_cap_mb=512,
-            static_graph=cf.get("ddp_static_graph", False),
-        )
+        with ProfilerSection("DistributedDataParallel"):
+            model = torch.nn.parallel.DistributedDataParallel(
+                model,
+                broadcast_buffers=True,
+                find_unused_parameters=cf.get("ddp_find_unused_parameters", True),
+                gradient_as_bucket_view=True,
+                bucket_cap_mb=512,
+                static_graph=cf.get("ddp_static_graph", False),
+            )
 
     elif with_ddp and with_fsdp:
         # with DDP *and() FSDP
@@ -118,46 +122,54 @@ def init_model_and_shard(
             MultiSelfAttentionHeadVarlen,
         )
 
-        for module in model.encoder.ae_local_engine.ae_local_blocks.modules():
-            if isinstance(module, modules_to_shard) and _has_trainable_params(module):
-                fully_shard(module, **fsdp_kwargs)
+        with ProfilerSection("FSDP shard ae_local_blocks"):
+            for module in model.encoder.ae_local_engine.ae_local_blocks.modules():
+                if isinstance(module, modules_to_shard) and _has_trainable_params(module):
+                    fully_shard(module, **fsdp_kwargs)
 
-        for module in model.encoder.ae_local_global_engine.ae_adapter.modules():
-            if isinstance(module, modules_to_shard) and _has_trainable_params(module):
-                fully_shard(module, **fsdp_kwargs)
+        with ProfilerSection("FSDP shard ae_adapter"):
+            for module in model.encoder.ae_local_global_engine.ae_adapter.modules():
+                if isinstance(module, modules_to_shard) and _has_trainable_params(module):
+                    fully_shard(module, **fsdp_kwargs)
 
-        for module in model.encoder.ae_global_engine.ae_global_blocks.modules():
-            if isinstance(module, modules_to_shard) and _has_trainable_params(module):
-                fully_shard(module, **fsdp_kwargs)
+        with ProfilerSection("FSDP shard ae_global_blocks"):
+            for module in model.encoder.ae_global_engine.ae_global_blocks.modules():
+                if isinstance(module, modules_to_shard) and _has_trainable_params(module):
+                    fully_shard(module, **fsdp_kwargs)
 
         if cf.get("fe_diffusion_model", False):
             model_fe_blocks = model.forecast_engine.net.fe_blocks
         else:
             model_fe_blocks = model.forecast_engine.fe_blocks
-        for module in model_fe_blocks.modules():
-            if isinstance(module, modules_to_shard):
-                fully_shard(module, **fsdp_kwargs)
+        with ProfilerSection("FSDP shard fe_blocks"):
+            for module in model_fe_blocks.modules():
+                if isinstance(module, modules_to_shard):
+                    fully_shard(module, **fsdp_kwargs)
 
-        for module in model.latent_heads.modules():
-            if isinstance(module, modules_to_shard):
-                # reshard_after_forward=False keeps FE parameters unsharded
-                # during the multi-step rollout loop.
-                # Needed for pushforward trick.
-                fully_shard(module, reshard_after_forward=False, **fsdp_kwargs)
+        with ProfilerSection("FSDP shard latent_heads"):
+            for module in model.latent_heads.modules():
+                if isinstance(module, modules_to_shard):
+                    # reshard_after_forward=False keeps FE parameters unsharded
+                    # during the multi-step rollout loop.
+                    # Needed for pushforward trick.
+                    fully_shard(module, reshard_after_forward=False, **fsdp_kwargs)
 
-        for module in model.latent_heads.modules():
-            if isinstance(module, modules_to_shard) and _has_trainable_params(module):
-                fully_shard(module, **fsdp_kwargs)
+        with ProfilerSection("FSDP shard latent_heads trainable"):
+            for module in model.latent_heads.modules():
+                if isinstance(module, modules_to_shard) and _has_trainable_params(module):
+                    fully_shard(module, **fsdp_kwargs)
 
         if model.deep_ssl_fusion is not None:
-            for module in model.deep_ssl_fusion.modules():
-                if isinstance(module, modules_to_shard) and _has_trainable_params(module):
-                    fully_shard(module, **fsdp_kwargs)
+            with ProfilerSection("FSDP shard deep_ssl_fusion"):
+                for module in model.deep_ssl_fusion.modules():
+                    if isinstance(module, modules_to_shard) and _has_trainable_params(module):
+                        fully_shard(module, **fsdp_kwargs)
 
         if model.deep_ssl_level_projections is not None:
-            for module in model.deep_ssl_level_projections.modules():
-                if isinstance(module, modules_to_shard) and _has_trainable_params(module):
-                    fully_shard(module, **fsdp_kwargs)
+            with ProfilerSection("FSDP shard deep_ssl_level_projections"):
+                for module in model.deep_ssl_level_projections.modules():
+                    if isinstance(module, modules_to_shard) and _has_trainable_params(module):
+                        fully_shard(module, **fsdp_kwargs)
 
         full_precision_fsdp_kwargs = {
             "mp_policy": (
@@ -170,43 +182,52 @@ def init_model_and_shard(
             ),
         }
 
-        for module in model.target_token_engines.modules():
-            if isinstance(module, modules_to_shard) and _has_trainable_params(module):
-                fully_shard(module, **full_precision_fsdp_kwargs)
+        with ProfilerSection("FSDP shard target_token_engines"):
+            for module in model.target_token_engines.modules():
+                if isinstance(module, modules_to_shard) and _has_trainable_params(module):
+                    fully_shard(module, **full_precision_fsdp_kwargs)
 
     if with_ddp and with_fsdp:
-        fully_shard(model)
-        for tensor in itertools.chain(model.parameters(), model.buffers()):
-            assert tensor.device == torch.device("meta")
+        with ProfilerSection("FSDP fully_shard(model)"):
+            fully_shard(model)
+        with ProfilerSection("FSDP assert meta tensors"):
+            for tensor in itertools.chain(model.parameters(), model.buffers()):
+                assert tensor.device == torch.device("meta")
 
         # For reasons we do not yet fully understand, when using train continue in some
         # instances, FSDP2 does not register the forward_channels and forward_columns
         # functions in the embedding engine as forward functions. Thus, yielding a crash
         # because the input tensors are not converted to DTensors. This seems to primarily
         # occur during validation.
-        for embed in model.encoder.embed_engine.embeds.values():
-            torch.distributed.fsdp.register_fsdp_forward_method(embed, "forward_channels")
-            torch.distributed.fsdp.register_fsdp_forward_method(embed, "forward_columns")
+        with ProfilerSection("FSDP register_fsdp_forward_method"):
+            for embed in model.encoder.embed_engine.embeds.values():
+                torch.distributed.fsdp.register_fsdp_forward_method(embed, "forward_channels")
+                torch.distributed.fsdp.register_fsdp_forward_method(embed, "forward_columns")
 
     # complete initalization and load model if inference/continuing a run
     loaded_from_run_id = None
     if run_id_contd is not None:
         if is_root():
             logger.info(f"Continuing run with id={run_id_contd} at mini_epoch {mini_epoch_contd}.")
-        model = load_model(cf, model, device, run_id_contd, with_ddp, with_fsdp, mini_epoch_contd)
+        with ProfilerSection("load_model"):
+            model = load_model(
+                cf, model, device, run_id_contd, with_ddp, with_fsdp, mini_epoch_contd
+            )
         loaded_from_run_id = run_id_contd
     elif cf.get("load_chkpt", {}).get("run_id", None):
         run_id = cf.load_chkpt.run_id
         mini_epoch = cf.load_chkpt.get("mini_epoch", -1)
         if is_root():
             logger.info(f"Loading checkpoint from id={run_id} at mini_epoch {mini_epoch}.")
-        model = load_model(cf, model, device, run_id, with_ddp, with_fsdp, mini_epoch)
+        with ProfilerSection("load_model"):
+            model = load_model(cf, model, device, run_id, with_ddp, with_fsdp, mini_epoch)
         loaded_from_run_id = run_id
     else:
         if with_ddp and with_fsdp:
-            model.to_empty(device="cuda")
-            if with_fsdp:
-                model.reset_parameters()
+            with ProfilerSection("FSDP to_empty + reset_parameters"):
+                model.to_empty(device="cuda")
+                if with_fsdp:
+                    model.reset_parameters()
 
     # Reset specified modules when starting a new stage (e.g. pretrain -> finetune);
     # skip when resuming the same run.
@@ -214,17 +235,19 @@ def init_model_and_shard(
     if loaded_from_run_id is not None and loaded_from_run_id != current_run_id:
         reset_modules = cf.get("reset_modules", "")
         if reset_modules:
-            assert not with_fsdp, "reset_modules with FSDP-sharded parameters is not supported"
-            # a parameter that is both reset and frozen would stay random forever
-            check_reset_not_frozen(model, reset_modules)
-            if is_root():
-                logger.info(f"Resetting weights for modules matching: {reset_modules}")
-            apply_fct_to_blocks(model, reset_modules, reset_weights)
-            # each rank resets with its own RNG; sync to rank 0 like DDP does at wrap time
-            broadcast_matching_params(model, reset_modules, src=0)
+            with ProfilerSection("reset_modules"):
+                assert not with_fsdp, "reset_modules with FSDP-sharded parameters is not supported"
+                # a parameter that is both reset and frozen would stay random forever
+                check_reset_not_frozen(model, reset_modules)
+                if is_root():
+                    logger.info(f"Resetting weights for modules matching: {reset_modules}")
+                apply_fct_to_blocks(model, reset_modules, reset_weights)
+                # each rank resets with its own RNG; sync to rank 0 like DDP does at wrap time
+                broadcast_matching_params(model, reset_modules, src=0)
 
     if is_root():
-        log_trainable_summary(model)
+        with ProfilerSection("log_trainable_summary"):
+            log_trainable_summary(model)
 
     # Optionally overlay the physical decoder from a separate checkpoint. This runs after the
     # primary load so it takes precedence for decoder weights while keeping the encoder /
@@ -238,14 +261,16 @@ def init_model_and_shard(
                 f"Loading decoder weights from id={decoder_run_id} "
                 f"at mini_epoch {decoder_mini_epoch}."
             )
-        model = load_decoder_from_checkpoint(
-            cf, model, device, decoder_run_id, with_ddp, with_fsdp, decoder_mini_epoch
-        )
+        with ProfilerSection("load_decoder_from_checkpoint"):
+            model = load_decoder_from_checkpoint(
+                cf, model, device, decoder_run_id, with_ddp, with_fsdp, decoder_mini_epoch
+            )
 
     # model params
-    model_params = ModelParams(cf).create(cf)
-    model_params.reset_parameters(cf)
-    model_params = model_params.to(f"cuda:{cf.local_rank}")
+    with ProfilerSection("ModelParams.create"):
+        model_params = ModelParams(cf).create(cf)
+        model_params.reset_parameters(cf)
+        model_params = model_params.to(f"cuda:{cf.local_rank}")
 
     return model, model_params
 
