@@ -82,11 +82,11 @@ dev = [
 [project.optional-dependencies]
 
 cpu = [
-  'torch==2.9.1',
+  'torch==2.12.0',
 ]
 
 gpu = [
-  "torch==2.9.1; sys_platform == 'linux'",
+  "torch==2.12.0; sys_platform == 'linux'",
   # flash-attn also has a torch dependency.
   "flash-attn",
 ]
@@ -175,9 +175,11 @@ link-mode = "symlink"
 # See https://docs.astral.sh/uv/reference/settings/#exclude-newer
 # TODO: pytorch does not publish valid release timestamps, so sadly it does not work.
 exclude-newer = "2026-04-27T00:00:00Z"
+# torch 2.12.0 was published 2026-05-13 and requires triton==3.7.0 (2026-05-07).
+exclude-newer-package = { torch = "2026-05-14T00:00:00Z", triton = "2026-05-08T00:00:00Z" }
 
-# torch 2.9.1 pulls nvidia-nccl-cu12==2.27.5. Override
-# torch's pin UP to 2.29 (newer than 2.27.5 = ABI-safe direction). See issue #<TODO>.
+# torch 2.12.0 is the first release whose FSDP has set_symm_mem_for_comm.
+# Keep NCCL on the 2.29+ window API (ncclCommWindowRegister). See issue #<TODO>.
 override-dependencies = ["nvidia-nccl-cu12>=2.29; sys_platform == 'linux'"]
 
 # The minimum version of uv required.
@@ -244,18 +246,18 @@ weathergen-readers-extra = { workspace = true }
 
 
 flash-attn = [
-  { url = "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.9cxx11abiTRUE-cp312-cp312-linux_aarch64.whl", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
+  { path = "/e/project1/e-ext-2025e01-128/kasravi/zurich_hackathon/wheels/flash_attn-2.8.3-cp312-cp312-linux_aarch64.whl", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
   { url = "https://github.com/cathalobrien/get-flash-attn/releases/download/v0.1-alpha/flash_attn-2.8.3+cu12torch2.9cxx11abiFALSE-cp312-cp312-linux_x86_64.whl", marker = "sys_platform == 'linux'  and platform_machine == 'x86_64'" },
   # There is no official support for flash-attn on macos
 ]
 
 torch = [
 # Explicit pin for GPU
-  { url = "https://download-r2.pytorch.org/whl/cu126/torch-2.9.1+cu126-cp312-cp312-manylinux_2_28_aarch64.whl", marker = 'sys_platform == "linux" and platform_machine == "aarch64"', extra="gpu" },
-  { url = "https://download-r2.pytorch.org/whl/cu126/torch-2.9.1+cu126-cp312-cp312-manylinux_2_28_x86_64.whl", marker = 'sys_platform == "linux"  and platform_machine == "x86_64"', extra="gpu" },
+  { url = "https://download-r2.pytorch.org/whl/cu126/torch-2.12.0+cu126-cp312-cp312-manylinux_2_28_aarch64.whl", marker = 'sys_platform == "linux" and platform_machine == "aarch64"', extra="gpu" },
+  { url = "https://download-r2.pytorch.org/whl/cu126/torch-2.12.0+cu126-cp312-cp312-manylinux_2_28_x86_64.whl", marker = 'sys_platform == "linux"  and platform_machine == "x86_64"', extra="gpu" },
 # Explicit pin for CPU.
-  { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.9.1+cpu-cp312-cp312-manylinux_2_28_aarch64.whl",marker = "sys_platform == 'linux' and platform_machine == 'aarch64'",extra = "cpu" },
-  { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.9.1+cpu-cp312-cp312-manylinux_2_28_x86_64.whl",marker = "sys_platform == 'linux' and platform_machine == 'x86_64'",extra = "cpu" },
+  { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.12.0+cpu-cp312-cp312-manylinux_2_28_aarch64.whl",marker = "sys_platform == 'linux' and platform_machine == 'aarch64'",extra = "cpu" },
+  { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.12.0+cpu-cp312-cp312-manylinux_2_28_x86_64.whl",marker = "sys_platform == 'linux' and platform_machine == 'x86_64'",extra = "cpu" },
 
   # No acceleration for now.
   # TODO: explore pytorch + metal backend
