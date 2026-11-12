@@ -156,11 +156,14 @@ class StreamEmbedTransformer(torch.nn.Module):
         if self.unembed_mode == "full":
             out = self.unembed(self.ln_final(x.flatten(-2, -1)))
         elif self.unembed_mode == "block":
-            out = [
-                checkpoint(ue, ln(x[:, i]), use_reentrant=False)
-                for i, (ue, ln) in enumerate(zip(self.unembed, self.ln_final, strict=True))
-            ]
-            out = torch.stack(out, dim=1).flatten(-2, -1)
+            # Existing norm modules, one GEMM for every channel linear.
+            # LayerNorm stays fp32 under autocast; nn.Linear used to return the
+            # activation dtype. Casting to that keeps scatter_() from seeing fp32.
+            dtype = x.dtype
+            y = torch.stack([ln(x[:, i]) for i, ln in enumerate(self.ln_final)], 1)
+            w = torch.stack([ue.weight for ue in self.unembed]).to(dtype)
+            b = torch.stack([ue.bias for ue in self.unembed]).to(dtype)
+            out = (torch.einsum("ncd,cod->nco", y.to(dtype), w) + b).flatten(-2, -1)
         else:
             raise ValueError(f"Unknown unembed mode: {self.unembed_mode}")
 
