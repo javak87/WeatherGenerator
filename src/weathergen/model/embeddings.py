@@ -156,14 +156,9 @@ class StreamEmbedTransformer(torch.nn.Module):
         if self.unembed_mode == "full":
             out = self.unembed(self.ln_final(x.flatten(-2, -1)))
         elif self.unembed_mode == "block":
-            # Existing norm modules, one GEMM for every channel linear.
-            # LayerNorm stays fp32 under autocast; nn.Linear used to return the
-            # activation dtype. Casting to that keeps scatter_() from seeing fp32.
-            dtype = x.dtype
-            y = torch.stack([ln(x[:, i]) for i, ln in enumerate(self.ln_final)], 1)
-            w = torch.stack([ue.weight for ue in self.unembed]).to(dtype)
-            b = torch.stack([ue.bias for ue in self.unembed]).to(dtype)
-            out = (torch.einsum("ncd,cod->nco", y.to(dtype), w) + b).flatten(-2, -1)
+            # One checkpoint for all channels. The norm is one kernel and the
+            # linears are one GEMM, so the recompute does not bring the launch loop back.
+            out = checkpoint(self._block_unembed, x, use_reentrant=False)
         else:
             raise ValueError(f"Unknown unembed mode: {self.unembed_mode}")
 
@@ -173,6 +168,23 @@ class StreamEmbedTransformer(torch.nn.Module):
         out = self.dropout_final(out.reshape(-1, self.num_tokens, self.dim_out))
 
         return out
+
+    def _block_unembed(self, x):
+        # LayerNorm stays fp32 under autocast; the GEMM returns x.dtype, matching nn.Linear.
+        dtype = x.dtype
+        ln0 = self.ln_final[0]
+        if isinstance(ln0, RMSNorm):
+            w_ln = torch.stack([ln.weight for ln in self.ln_final]).to(dtype)
+            xf = x.float()
+            y = (xf * torch.rsqrt(xf.pow(2).mean(-1, keepdim=True) + ln0.eps)).to(dtype) * w_ln
+        else:
+            w_ln = torch.stack([ln.weight for ln in self.ln_final])
+            b_ln = torch.stack([ln.bias for ln in self.ln_final])
+            y = torch.nn.functional.layer_norm(x, (x.shape[-1],), None, None, ln0.eps)
+            y = y * w_ln + b_ln
+        w = torch.stack([ue.weight for ue in self.unembed]).to(dtype)
+        b = torch.stack([ue.bias for ue in self.unembed]).to(dtype)
+        return (torch.einsum("ncd,cod->nco", y.to(dtype), w) + b).flatten(-2, -1)
 
     def forward_columns(self, x_in):
         # embed provided input data
